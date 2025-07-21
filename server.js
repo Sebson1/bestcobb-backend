@@ -1,55 +1,76 @@
 // server.js
-// This is the backend server for the Bestcobb Sports Bar & Grill online order form.
-// It uses the Express framework to create a simple API that listens for new orders.
+// Updated backend server with Twilio integration for WhatsApp notifications.
 
 // --- 1. Import Dependencies ---
-// Express is the web server framework.
-// Cors is a security middleware to allow your frontend website to communicate with this backend.
 const express = require('express');
 const cors = require('cors');
+// Import the Twilio helper library
+const twilio = require('twilio');
 
 // --- 2. Initialize the Application ---
 const app = express();
-// Render will provide a PORT environment variable. For local testing, we default to 3000.
 const PORT = process.env.PORT || 3000;
 
-// --- 3. Configure Middleware ---
-// Enable CORS for all routes, allowing your GitHub Pages site to make requests.
+// --- 3. Twilio Configuration ---
+// Get your Twilio credentials from environment variables for security.
+const accountSid = process.env.TWILIO_ACCOUNT_SID;
+const authToken = process.env.TWILIO_AUTH_TOKEN;
+// The special WhatsApp-enabled phone number you get from Twilio.
+const twilioPhoneNumber = process.env.TWILIO_PHONE_NUMBER;
+// Your personal phone number where you want to receive notifications.
+const myPhoneNumber = process.env.MY_PHONE_NUMBER; 
+
+// Initialize the Twilio client if credentials are provided
+const client = (accountSid && authToken) ? twilio(accountSid, authToken) : null;
+
+// --- 4. Configure Middleware ---
 app.use(cors());
-// Enable the Express server to parse incoming JSON data from the form.
 app.use(express.json());
 
-// --- 4. Define the API Route for Placing Orders ---
-// This creates an endpoint that listens for POST requests at the URL '/api/place-order'.
+// --- 5. Define the API Route for Placing Orders ---
 app.post('/api/place-order', (req, res) => {
-    // The form data sent from the website is available in the 'request body' (req.body).
     const orderData = req.body;
 
     // Log the received order to the server's console.
-    // When you deploy this on Render, you can view these logs in your dashboard.
     console.log('--- NEW ORDER RECEIVED ---');
-    console.log('Timestamp:', new Date().toUTCString());
-    console.log('Customer Details:', orderData.customer);
-    console.log('Order Items:', orderData.items);
-    console.log('Order Total:', orderData.total);
+    console.log('Customer:', orderData.customer);
+    console.log('Items:', orderData.items);
     console.log('--------------------------\n');
 
-    // --- YOUR CUSTOM LOGIC GOES HERE ---
-    // This is where you would add code to:
-    // - Save 'orderData' to a database (e.g., MongoDB, Firebase, PostgreSQL).
-    // - Send a confirmation email to the customer using a service like SendGrid.
-    // - Send a WhatsApp notification to your phone using an API like Twilio.
-    // - Alert your kitchen staff through another system.
-    
-    // Send a success response back to the website to confirm the order was received.
+    // --- Send WhatsApp Notification via Twilio ---
+    if (client && twilioPhoneNumber && myPhoneNumber) {
+        // Format a nice message for WhatsApp
+        let notificationMessage = `*New Order Alert!* (ID: BCB-${Date.now()})\n\n`;
+        notificationMessage += `*Customer:* ${orderData.customer.name}\n`;
+        notificationMessage += `*Phone:* ${orderData.customer.phone}\n`;
+        notificationMessage += `*Address:* ${orderData.customer.address}\n\n`;
+        notificationMessage += "*--- Items ---*\n";
+        orderData.items.forEach(item => {
+            notificationMessage += `- ${item.quantity}x ${item.name}\n`;
+        });
+        notificationMessage += `\n*Total: GH₵${orderData.total}*`;
+
+        // Use the client to send the message
+        client.messages
+            .create({
+                from: `whatsapp:${twilioPhoneNumber}`, // From your Twilio WhatsApp number
+                body: notificationMessage,
+                to: `whatsapp:${myPhoneNumber}` // To your personal WhatsApp number
+            })
+            .then(message => console.log('WhatsApp notification sent! SID:', message.sid))
+            .catch(error => console.error('Error sending WhatsApp message:', error));
+    } else {
+        console.log('Twilio credentials not configured. Skipping WhatsApp notification.');
+    }
+
+    // Send a success response back to the frontend
     res.status(200).json({ 
         message: 'Order received successfully by the server!',
-        orderId: `BCB-${Date.now()}` // Generate a simple, unique order ID
+        orderId: `BCB-${Date.now()}`
     });
 });
 
-// --- 5. Start the Server ---
-// This command starts the server and makes it listen for incoming requests on the specified port.
+// --- 6. Start the Server ---
 app.listen(PORT, () => {
     console.log(`Bestcobb backend server is running and listening on port ${PORT}`);
 });
