@@ -1,5 +1,5 @@
 // server.js
-// Final backend server with WhatsApp notifications for you AND SMS confirmations for the customer.
+// Final backend server with WhatsApp notifications for you AND WhatsApp/SMS confirmations for the customer.
 
 // --- 1. Import Dependencies ---
 const express = require('express');
@@ -29,6 +29,7 @@ app.use(express.json());
 app.post('/api/place-order', (req, res) => {
     const orderData = req.body;
     const customerPhoneNumber = orderData.customer.phone;
+    const orderId = `BCB-${Date.now()}`;
 
     console.log('--- NEW ORDER RECEIVED ---');
     console.log('Customer:', orderData.customer);
@@ -39,7 +40,7 @@ app.post('/api/place-order', (req, res) => {
     } else {
         // --- Notification 1: Send WhatsApp Alert to YOUR Phone ---
         if (myPhoneNumber) {
-            let adminMessage = `*New Order Alert!* (ID: BCB-${Date.now()})\n\n`;
+            let adminMessage = `*New Order Alert!* (ID: ${orderId})\n\n`;
             adminMessage += `*Customer:* ${orderData.customer.name}\n*Phone:* ${orderData.customer.phone}\n*Address:* ${orderData.customer.address}\n\n`;
             adminMessage += "*--- Items ---*\n";
             orderData.items.forEach(item => {
@@ -57,29 +58,51 @@ app.post('/api/place-order', (req, res) => {
                 .catch(error => console.error('Error sending admin WhatsApp message:', error));
         }
 
-        // --- Notification 2: Send SMS Confirmation to the CUSTOMER's Phone ---
+        // --- Notification 2: Send WhatsApp Receipt (or SMS Fallback) to the CUSTOMER ---
         if (customerPhoneNumber) {
-            // Format the customer's number for Twilio (e.g., from 024... to +23324...)
             const formattedCustomerNumber = `+233${customerPhoneNumber.substring(1)}`;
             
-            // Create the message with the company name as the heading.
-            let customerMessage = `Bestcobb Sports Bar Restaurant & Grill: Hi ${orderData.customer.name}, we have received your order! Total: GH₵${orderData.total}. We will contact you shortly to confirm.`;
+            // Create a detailed WhatsApp receipt message.
+            let whatsappReceipt = `*Bestcobb Sports Bar Restaurant & Grill*\n\n`;
+            whatsappReceipt += `Hi *${orderData.customer.name}*, thank you for your order!\n\n`;
+            whatsappReceipt += `*Order ID:* ${orderId}\n`;
+            whatsappReceipt += `*Total:* GH₵${orderData.total}\n\n`;
+            whatsappReceipt += "*--- Your Items ---*\n";
+            orderData.items.forEach(item => {
+                whatsappReceipt += `- ${item.quantity}x ${item.name}\n`;
+            });
+            whatsappReceipt += `\nWe will contact you shortly to confirm delivery details.`;
 
+            // Try sending the WhatsApp receipt first.
             client.messages
                 .create({
-                    body: customerMessage,
-                    from: twilioPhoneNumber, // Your purchased Twilio number
-                    to: formattedCustomerNumber // The customer's phone number
+                    from: `whatsapp:${twilioPhoneNumber}`,
+                    body: whatsappReceipt,
+                    to: `whatsapp:${formattedCustomerNumber}` // Send to customer's WhatsApp
                 })
-                .then(message => console.log('Customer SMS confirmation sent! SID:', message.sid))
-                .catch(error => console.error('Error sending customer SMS:', error));
+                .then(message => console.log('Customer WhatsApp receipt sent! SID:', message.sid))
+                .catch(error => {
+                    // If sending WhatsApp fails, log the error and fall back to sending an SMS.
+                    console.error('Could not send WhatsApp to customer (they may not have it), falling back to SMS. Error:', error.message);
+                    
+                    let smsMessage = `Bestcobb Sports Bar & Grill: Hi ${orderData.customer.name}, we have received your order! Total: GH₵${orderData.total}. We will contact you shortly to confirm.`;
+
+                    client.messages
+                        .create({
+                            body: smsMessage,
+                            from: twilioPhoneNumber, // Your purchased Twilio number
+                            to: formattedCustomerNumber // The customer's phone number
+                        })
+                        .then(message => console.log('Customer SMS confirmation sent! SID:', message.sid))
+                        .catch(smsError => console.error('Error sending customer SMS:', smsError));
+                });
         }
     }
 
     // Send a success response back to the frontend
     res.status(200).json({ 
         message: 'Order received successfully!',
-        orderId: `BCB-${Date.now()}`
+        orderId: orderId
     });
 });
 
